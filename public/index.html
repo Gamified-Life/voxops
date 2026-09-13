@@ -291,6 +291,8 @@ input,select,textarea{font-family:var(--font);}
 ════════════════════════════════════ */
 #voice-fab{position:fixed;bottom:2rem;right:2rem;width:60px;height:60px;background:var(--px);color:white;border:none;border-radius:50%;font-size:1.5rem;box-shadow:0 4px 16px rgba(79,70,229,0.4);z-index:600;transition:all .2s;display:flex;align-items:center;justify-content:center;display:none;}
 #voice-fab:hover{background:var(--px2);transform:scale(1.08);box-shadow:0 6px 24px rgba(79,70,229,0.5);}
+#voice-fab.recording{background:var(--red);animation:pulseRec 1s infinite;}
+@keyframes pulseRec{0%,100%{box-shadow:0 4px 16px rgba(220,38,38,0.4);}50%{box-shadow:0 4px 28px rgba(220,38,38,0.7);}}
 
 /* ════════════════════════════════════
    RESPONSIVE
@@ -666,68 +668,74 @@ function makeFig(opts={},scale=5){
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="image-rendering:pixelated;display:block;">${d}</svg>`;
 }
 
-const TEAM_CHARS=[
-  {name:'You',hair:'#3D2B1F',torso:'#1E3A5F',legs:'#374151',tie:'#6366F1',glasses:false,accessory:'laptop',lvl:5,me:true},
-  {name:'Arjun',hair:'#1a1a1a',torso:'#1a3a1a',legs:'#374151',tie:'#DC2626',glasses:false,accessory:'briefcase',lvl:23},
-  {name:'Priya',hair:'#6B2D00',torso:'#4A1C4A',legs:'#374151',tie:'#DB2777',glasses:false,accessory:'phone',lvl:18},
-  {name:'Rahul',hair:'#1a1a1a',torso:'#1E3A5F',legs:'#1a1a1a',tie:'#059669',glasses:true,accessory:'briefcase',lvl:12},
-  {name:'Sara',hair:'#B8860B',torso:'#7C2D12',legs:'#374151',tie:'#D97706',glasses:false,accessory:'laptop',lvl:9},
-  {name:'Vijay',hair:'#3D2B1F',torso:'#1E3A5F',legs:'#374151',tie:'#0891B2',glasses:true,hat:true,accessory:'briefcase',lvl:31},
-  {name:'Ananya',hair:'#1a1a1a',torso:'#312E81',legs:'#1E3A5F',tie:'#8B5CF6',glasses:false,accessory:'phone',lvl:7},
-];
+// Deterministic pixel-fig look-and-feel per real user, derived from their
+// avatar_seed (assigned once at signup) instead of a hardcoded cast.
+const PALETTE={
+  hair:['#3D2B1F','#1a1a1a','#6B2D00','#B8860B'],
+  torso:['#1E3A5F','#1a3a1a','#4A1C4A','#7C2D12','#312E81'],
+  tie:['#6366F1','#DC2626','#DB2777','#059669','#D97706','#0891B2','#8B5CF6'],
+  accessory:['briefcase','laptop','phone'],
+};
+function hashSeed(s){let h=0;s=String(s||'x');for(let i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))>>>0;}return h;}
+function charFromMember(m,isMe){
+  const h=hashSeed(m.avatar_seed||m.id);
+  return{
+    name:m.display_name,
+    hair:PALETTE.hair[h%PALETTE.hair.length],
+    torso:PALETTE.torso[(h>>2)%PALETTE.torso.length],
+    legs:'#374151',
+    tie:PALETTE.tie[(h>>4)%PALETTE.tie.length],
+    glasses:!!(h&16), hat:!!(h&64),
+    accessory:PALETTE.accessory[(h>>6)%PALETTE.accessory.length],
+    lvl:m.level, me:!!isMe,
+  };
+}
+const HERO_DECOR={hair:'#3D2B1F',torso:'#1E3A5F',legs:'#374151',tie:'#6366F1',glasses:false,accessory:'laptop'};
 
 // ══════════════════════════════════════════════════
-//  APP STATE
+//  API CLIENT
+// ══════════════════════════════════════════════════
+async function api(path,opts={}){
+  const res=await fetch(path,{
+    credentials:'include',
+    ...opts,
+    headers:{ 'Content-Type':'application/json', ...(opts.headers||{}) },
+    body: opts.body===undefined ? undefined : JSON.stringify(opts.body),
+  });
+  if(!res.ok){
+    const err=await res.json().catch(()=>({error:res.statusText}));
+    throw new Error(err.error||'Request failed');
+  }
+  return res.status===204?null:res.json();
+}
+
+// ══════════════════════════════════════════════════
+//  APP STATE (hydrated from the server after login)
 // ══════════════════════════════════════════════════
 let st={
-  user:'Player',mode:'personal',xp:40,level:5,coins:240,
-  habits:[
-    {id:1,name:'Write SQL query',cat:'sql',streak:5,count:12},
-    {id:2,name:'Review API endpoints',cat:'api',streak:3,count:8},
-    {id:3,name:'Debug backend error',cat:'debug',streak:8,count:15},
-    {id:4,name:'Update server config',cat:'backend',streak:2,count:4},
-  ],
-  dailies:[
-    {id:1,name:'Daily standup notes',cat:'backend',done:false,streak:7,timer:'15m'},
-    {id:2,name:'Review pull requests',cat:'api',done:true,streak:12,timer:'30m'},
-    {id:3,name:'Write unit tests',cat:'debug',done:false,streak:3,timer:'45m'},
-    {id:4,name:'DB backup check',cat:'sql',done:false,streak:9,timer:'10m'},
-    {id:5,name:'Auth token refresh',cat:'auth',done:true,streak:5,timer:'20m'},
-  ],
-  todos:[
-    {id:1,name:'Set up n8n automation pipeline',pri:'h',done:false,daysOld:6,count:2},
-    {id:2,name:'Write Q3 API documentation',pri:'h',done:false,daysOld:8,count:4},
-    {id:3,name:'Fix authentication bug in prod',pri:'h',done:false,daysOld:1,count:1},
-    {id:4,name:'Migrate MySQL schema v2',pri:'m',done:false,daysOld:5,count:3},
-    {id:5,name:'Integrate Stripe webhook',pri:'m',done:false,daysOld:10,count:5},
-    {id:6,name:'Optimise slow SQL queries',pri:'l',done:false,daysOld:3,count:3},
-    {id:7,name:'Deploy to staging environment',pri:'h',done:true,daysOld:0,count:1},
-  ],
-  rewards:[
-    {id:1,name:'Coffee break ☕',cost:10},
-    {id:2,name:'30 min early finish',cost:30},
-    {id:3,name:'Team lunch 🍕',cost:80},
-    {id:4,name:'No-meeting Friday',cost:150},
-    {id:5,name:'New mechanical keyboard ⌨️',cost:300},
-  ],
-  workflows:[],
-  teamTasks:[
-    {id:1,name:'Implement OAuth2 flow',pri:'h',owner:'Arjun',done:false},
-    {id:2,name:'Database connection pooling',pri:'m',owner:'Priya',done:false},
-    {id:3,name:'Rate limiting middleware',pri:'h',owner:'Rahul',done:true},
-    {id:4,name:'Error logging service',pri:'l',owner:'Sara',done:false},
-  ],
-  teamActivity:[
-    {user:'Arjun',action:'completed "Fix OAuth bug"',xp:10,time:'2m ago',color:'#1a3a1a'},
-    {user:'Priya',action:'added "SQL optimisation" habit',xp:0,time:'15m ago',color:'#4A1C4A'},
-    {user:'Vijay',action:'deployed n8n workflow',xp:15,time:'1h ago',color:'#1E3A5F'},
-    {user:'Rahul',action:'levelled up to LVL 12!',xp:0,time:'2h ago',color:'#1E3A5F'},
-    {user:'Sara',action:'completed 3 dailies',xp:30,time:'3h ago',color:'#7C2D12'},
-  ],
-  nextId:200, activeN8nTask:null,
+  user:'Player',userId:null,avatarSeed:null,mode:'personal',xp:0,level:1,coins:0,
+  habits:[],dailies:[],todos:[],rewards:[],workflows:[],
+  team:{members:[],activity:[],tasks:[]},
+  activeN8nTask:null,
 };
 
 let loginMode='personal';
+
+function applyProgress(progress,msg,type){
+  if(msg)toast(msg,type);
+  if(!progress)return;
+  st.xp=progress.xp;st.level=progress.level;st.coins=progress.coins;
+  if(progress.milestone)openMilestone();
+  else if(progress.leveledUp)toast(`🎉 Level Up! You are now LVL ${st.level}!`,'success');
+}
+function daysAgo(ts){return Math.floor((Date.now()-new Date(ts).getTime())/86400000);}
+function timeAgo(ts){
+  const s=Math.floor((Date.now()-new Date(ts).getTime())/1000);
+  if(s<60)return'just now';
+  if(s<3600)return Math.floor(s/60)+'m ago';
+  if(s<86400)return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
+}
 
 // ══════════════════════════════════════════════════
 //  LOGIN
@@ -738,22 +746,25 @@ function selectMode(btn,mode){
   btn.classList.add('selected');
 }
 
-function doLogin(){
+async function doLogin(){
   const email=document.getElementById('l-email').value.trim();
   const pass=document.getElementById('l-pass').value;
   if(!email||!pass){toast('Please enter credentials','warn');return;}
-  st.user=email.split('@')[0].split('.').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ');
-  st.mode=loginMode;
-  document.getElementById('s-login').classList.remove('active');
-  document.getElementById('s-app').classList.add('active');
-  document.getElementById('voice-fab').style.display='flex';
-  const badge=document.getElementById('mode-badge');
-  badge.textContent=st.mode==='team'?'Team Mode':'Personal';
-  badge.className='mode-badge '+(st.mode==='team'?'team':'personal');
-  initApp();
+  try{
+    const user=await api('/api/auth/login',{method:'POST',body:{email,password:pass,mode:loginMode}});
+    st.user=user.displayName;st.userId=user.id;st.avatarSeed=user.avatarSeed;st.mode=user.mode;
+    document.getElementById('s-login').classList.remove('active');
+    document.getElementById('s-app').classList.add('active');
+    document.getElementById('voice-fab').style.display='flex';
+    const badge=document.getElementById('mode-badge');
+    badge.textContent=st.mode==='team'?'Team Mode':'Personal';
+    badge.className='mode-badge '+(st.mode==='team'?'team':'personal');
+    await initApp();
+  }catch(e){toast(e.message,'err');}
 }
 
-function doLogout(){
+async function doLogout(){
+  try{await api('/api/auth/logout',{method:'POST'});}catch(e){}
   document.getElementById('s-app').classList.remove('active');
   document.getElementById('s-login').classList.add('active');
   document.getElementById('voice-fab').style.display='none';
@@ -762,27 +773,28 @@ function doLogout(){
 // ══════════════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════════════
-function initApp(){
-  renderCharStrip();
-  renderHeader();
-  renderAll();
-  renderWorkflows();
-  renderTeam();
-  // Pre-seed a couple workflows from stale todos
-  st.todos.filter(t=>t.count>=3&&!t.done).forEach(t=>{
-    if(!st.workflows.find(w=>w.taskId===t.id)){
-      createWorkflow(t,'slack');
-    }
-  });
-  renderWorkflows();
-  toast(`Welcome, ${st.user}! +50 XP login bonus 🎉`,'xp');
-  gainXP(50,false);
+async function initApp(){
+  try{
+    const state=await api('/api/state');
+    st.xp=state.user.xp;st.level=state.user.level;st.coins=state.user.coins;
+    st.habits=state.habits;st.dailies=state.dailies;st.todos=state.todos;st.rewards=state.rewards;
+    st.workflows=state.workflows;
+    try{st.team=await api('/api/team');}catch(e){st.team={members:[],activity:[],tasks:[]};}
+    renderCharStrip();
+    renderHeader();
+    renderAll();
+    renderWorkflows();
+    renderTeam();
+    toast(`Welcome, ${st.user}!`,'xp');
+  }catch(e){toast(e.message,'err');}
 }
 
 function renderCharStrip(){
   const strip=document.getElementById('char-strip');
   strip.innerHTML='';
-  TEAM_CHARS.forEach(c=>{
+  const members=(st.team&&st.team.members.length)?st.team.members:[{id:st.userId,display_name:st.user,level:st.level,avatar_seed:st.avatarSeed}];
+  members.forEach(m=>{
+    const c=charFromMember(m,m.id===st.userId);
     const item=document.createElement('div');
     item.className='char-item';
     const fig=document.createElement('div');
@@ -793,7 +805,7 @@ function renderCharStrip(){
     lvl.textContent='LVL '+c.lvl;
     const nm=document.createElement('div');
     nm.className='char-name';
-    nm.textContent=c.me?st.user.split(' ')[0]:c.name;
+    nm.textContent=c.me?st.user.split(' ')[0]:c.name.split(' ')[0];
     item.appendChild(fig);item.appendChild(lvl);item.appendChild(nm);
     strip.appendChild(item);
   });
@@ -805,9 +817,9 @@ function renderHeader(){
   document.getElementById('h-xp-bar').style.width=pct+'%';
   document.getElementById('h-xp-text').textContent=(st.xp%100)+' / 100 XP';
   document.getElementById('h-coins').textContent=st.coins;
-  // mini figure in header
+  // mini figure in header — the logged-in user's own look
   const hf=document.getElementById('header-fig');
-  hf.innerHTML=makeFig(TEAM_CHARS[0],3);
+  hf.innerHTML=makeFig(charFromMember({avatar_seed:st.avatarSeed,id:st.userId,level:st.level,display_name:st.user},true),3);
 }
 
 function renderAll(){renderHabits();renderDailies();renderTodos();renderRewards();}
@@ -832,7 +844,7 @@ function renderHabits(){
         <div class="hb-name">${h.name}</div>
         <div class="hb-meta">
           <span class="hb-streak">🔥 ${h.streak} streak</span>
-          <span class="hb-cat">${h.cat}</span>
+          <span class="hb-cat">${h.category}</span>
         </div>
       </div>
       <button class="del-btn" onclick="delItem('habits',${h.id})">×</button>`;
@@ -840,14 +852,15 @@ function renderHabits(){
   });
 }
 
-function habitClick(id,dir){
-  const h=st.habits.find(x=>x.id===id);
-  if(!h)return;
-  h.count+=1;
-  if(dir===1){h.streak++;gainXP(10);gainCoins(5);toast(`+10 XP — ${h.name}!`,'xp');}
-  else{h.streak=Math.max(0,h.streak-1);st.xp=Math.max(0,st.xp-5);toast(`Streak hit 😬`,'warn');}
-  if(h.count===3) triggerN8nSuggestion(h.id,'habit',h.name);
-  renderHabits();renderHeader();
+async function habitClick(id,dir){
+  try{
+    const {task,progress,stale}=await api(`/api/tasks/${id}/complete`,{method:'POST',body:{delta:dir}});
+    const idx=st.habits.findIndex(h=>h.id===id);
+    if(idx>-1)st.habits[idx]=task;
+    applyProgress(progress,dir===1?`+10 XP — ${task.name}!`:'Streak hit 😬',dir===1?'xp':'warn');
+    if(stale)triggerN8nSuggestion(task.id,'habit',task.name);
+    renderHabits();renderHeader();
+  }catch(e){toast(e.message,'err');}
 }
 
 // ══════════════════════════════════════════════════
@@ -866,9 +879,9 @@ function renderDailies(){
       <div class="dl-info">
         <div class="dl-name">${d.name}</div>
         <div class="dl-meta">
-          <span class="dl-timer">⏱ ${d.timer}</span>
+          <span class="dl-timer">⏱ ${d.timer_label}</span>
           <span class="dl-streak">🔥${d.streak}</span>
-          <span class="dl-cat">${d.cat}</span>
+          <span class="dl-cat">${d.category}</span>
         </div>
       </div>
       <button class="del-btn" onclick="delItem('dailies',${d.id})">×</button>`;
@@ -876,37 +889,40 @@ function renderDailies(){
   });
 }
 
-function toggleDaily(id){
-  const d=st.dailies.find(x=>x.id===id);
-  if(!d)return;
-  d.done=!d.done;
-  if(d.done){d.streak++;gainXP(10);gainCoins(5);toast(`Daily done! +10 XP 🎯`,'xp');}
-  else d.streak=Math.max(0,d.streak-1);
-  renderDailies();renderHeader();
+async function toggleDaily(id){
+  try{
+    const {task,progress}=await api(`/api/tasks/${id}/toggle`,{method:'POST'});
+    const idx=st.dailies.findIndex(d=>d.id===id);
+    if(idx>-1)st.dailies[idx]=task;
+    applyProgress(progress,task.done?'Daily done! +10 XP 🎯':null,'xp');
+    renderDailies();renderHeader();
+  }catch(e){toast(e.message,'err');}
 }
 
 // ══════════════════════════════════════════════════
 //  TODOS
 // ══════════════════════════════════════════════════
 const PRI_LABEL={h:'High',m:'Med',l:'Low'};
+const TODO_XP={h:25,m:15,l:10};
 function renderTodos(){
   const body=document.getElementById('body-todos');
   const addRow=document.getElementById('add-todos');
   body.innerHTML='';body.appendChild(addRow);
   document.getElementById('cnt-todos').textContent=st.todos.filter(t=>!t.done).length;
   st.todos.forEach(t=>{
-    const stale=t.count>=3&&!t.done;
+    const stale=t.complete_count>=3&&!t.done;
+    const daysOld=daysAgo(t.created_at);
     const el=document.createElement('div');
-    el.className=`todo-card ${t.pri}${t.done?' done':''}`;
+    el.className=`todo-card ${t.priority}${t.done?' done':''}`;
     el.innerHTML=`
       <div class="td-check${t.done?' checked':''}" onclick="toggleTodo(${t.id})">${t.done?'✓':''}</div>
       <div class="td-info">
         <div class="td-name">${t.name}</div>
         <div class="td-badges">
-          ${t.daysOld>0?`<span class="td-age">${t.daysOld}d old</span>`:`<span class="td-age" style="color:var(--green)">New</span>`}
-          <span class="td-pri ${t.pri}">${PRI_LABEL[t.pri]}</span>
+          ${daysOld>0?`<span class="td-age">${daysOld}d old</span>`:`<span class="td-age" style="color:var(--green)">New</span>`}
+          <span class="td-pri ${t.priority}">${PRI_LABEL[t.priority]}</span>
           ${stale?`<button class="n8n-btn" onclick="openN8n(${t.id})">⚡ n8n</button>`:''}
-          ${t.count>=3?`<span style="font-size:0.68rem;color:var(--text3);font-family:var(--mono)">×${t.count}</span>`:''}
+          ${t.complete_count>=3?`<span style="font-size:0.68rem;color:var(--text3);font-family:var(--mono)">×${t.complete_count}</span>`:''}
         </div>
       </div>
       <button class="del-btn" onclick="delItem('todos',${t.id})">×</button>`;
@@ -914,17 +930,17 @@ function renderTodos(){
   });
 }
 
-function toggleTodo(id){
-  const t=st.todos.find(x=>x.id===id);if(!t)return;
-  t.done=!t.done;
-  if(t.done){
-    t.count++;
-    const xpMap={h:25,m:15,l:10};
-    gainXP(xpMap[t.pri]);gainCoins(xpMap[t.pri]);
-    toast(`✓ ${t.name.slice(0,30)} +${xpMap[t.pri]} XP`,'xp');
-    if(t.count>=3)triggerN8nSuggestion(t.id,'todo',t.name);
-  }
-  renderTodos();renderHeader();
+async function toggleTodo(id){
+  try{
+    const {task,progress,stale}=await api(`/api/tasks/${id}/toggle`,{method:'POST'});
+    const idx=st.todos.findIndex(t=>t.id===id);
+    if(idx>-1)st.todos[idx]=task;
+    if(task.done){
+      applyProgress(progress,`✓ ${task.name.slice(0,30)} +${TODO_XP[task.priority]||10} XP`,'xp');
+      if(stale)triggerN8nSuggestion(task.id,'todo',task.name);
+    }
+    renderTodos();renderHeader();
+  }catch(e){toast(e.message,'err');}
 }
 
 // ══════════════════════════════════════════════════
@@ -947,11 +963,14 @@ function renderRewards(){
   });
 }
 
-function buyReward(id){
+async function buyReward(id){
   const r=st.rewards.find(x=>x.id===id);if(!r||st.coins<r.cost)return;
-  st.coins-=r.cost;
-  toast(`Reward unlocked: ${r.name} 🎉`,'success');
-  renderRewards();renderHeader();
+  try{
+    const {progress}=await api(`/api/tasks/rewards/${id}/buy`,{method:'POST'});
+    st.coins=progress.coins;
+    toast(`Reward unlocked: ${r.name} 🎉`,'success');
+    renderRewards();renderHeader();
+  }catch(e){toast(e.message,'err');}
 }
 
 // ══════════════════════════════════════════════════
@@ -964,52 +983,36 @@ function toggleAdd(col){
   if(!vis)document.getElementById('inp-'+col).focus();
 }
 
-function addTask(col){
+async function addTask(col){
   const inp=document.getElementById('inp-'+col);
   const val=inp.value.trim();if(!val)return;
-  const id=++st.nextId;
-  if(col==='habits'){
-    const cat=document.getElementById('sel-habits').value;
-    st.habits.push({id,name:val,cat,streak:0,count:0});
-  } else if(col==='dailies'){
-    st.dailies.push({id,name:val,cat:'backend',done:false,streak:0,timer:'30m'});
-  } else if(col==='todos'){
-    const pri=document.getElementById('sel-todos').value;
-    st.todos.push({id,name:val,pri,done:false,daysOld:0,count:0});
-  } else if(col==='rewards'){
-    const cost=parseInt(document.getElementById('inp-rewards-cost').value)||30;
-    st.rewards.push({id,name:val,cost});
-  }
-  inp.value='';
-  document.getElementById('add-'+col).style.display='none';
-  renderAll();toast('Task added 📋');
+  const body={name:val};
+  if(col==='habits'){body.type='habit';body.category=document.getElementById('sel-habits').value;}
+  else if(col==='dailies'){body.type='daily';body.category='backend';}
+  else if(col==='todos'){body.type='todo';body.priority=document.getElementById('sel-todos').value;}
+  else if(col==='rewards'){body.type='reward';body.cost=parseInt(document.getElementById('inp-rewards-cost').value)||30;}
+  try{
+    const task=await api('/api/tasks',{method:'POST',body});
+    st[col].push(task);
+    inp.value='';
+    document.getElementById('add-'+col).style.display='none';
+    renderAll();toast('Task added 📋');
+  }catch(e){toast(e.message,'err');}
 }
 
-function delItem(col,id){
-  st[col]=st[col].filter(x=>x.id!==id);
-  renderAll();toast('Removed','warn');
+async function delItem(col,id){
+  try{
+    await api(`/api/tasks/${id}`,{method:'DELETE'});
+    st[col]=st[col].filter(x=>x.id!==id);
+    renderAll();toast('Removed','warn');
+  }catch(e){toast(e.message,'err');}
 }
-
-// ══════════════════════════════════════════════════
-//  XP / COINS / LEVELLING
-// ══════════════════════════════════════════════════
-function gainXP(n,showToast=true){
-  st.xp+=n;
-  const lvl=Math.floor(st.xp/100)+1;
-  if(lvl>st.level){
-    st.level=lvl;
-    if(st.level%10===0) openMilestone();
-    else toast(`🎉 Level Up! You are now LVL ${st.level}!`,'success');
-  }
-  renderHeader();
-}
-function gainCoins(n){st.coins+=n;renderHeader();}
 
 // ══════════════════════════════════════════════════
 //  N8N
 // ══════════════════════════════════════════════════
 function triggerN8nSuggestion(taskId,type,name){
-  if(st.workflows.find(w=>w.taskId===taskId&&w.taskType===type))return;
+  if(st.workflows.find(w=>w.task_id===taskId&&w.task_type===type))return;
   toast(`⚡ "${name}" — n8n automation available!`,'warn');
 }
 
@@ -1031,38 +1034,28 @@ function pickAction(el){
   document.getElementById('n8n-action-lbl').textContent=labels[el.dataset.act]||el.dataset.act;
 }
 
-function deployN8n(){
+// Deploying now makes a real call: the backend fires the n8n webhook (if
+// N8N_WEBHOOK_URL is configured) and persists the workflow either way.
+async function deployN8n(){
   const act=document.querySelector('.action-opt.sel')?.dataset.act||'slack';
   const t=st.activeN8nTask;
-  if(t) createWorkflow(t,act);
-  renderWorkflows();
-  const subs={
-    slack:'Slack reminder will fire daily at 9am with task context.',
-    email:'Morning email digest includes this task + blockers.',
-    calendar:'30-min focus block auto-created in your calendar.'
-  };
-  document.getElementById('n8n-success-sub').innerHTML=`${subs[act]||''}<br/><b>+150 XP · +50 GP earned</b>`;
-  document.getElementById('n8n-main').style.display='none';
-  document.getElementById('n8n-success').classList.add('show');
-  gainXP(15);gainCoins(50);
-  toast('⚡ Workflow deployed! +50 GP','success');
-}
-
-function createWorkflow(task,action){
-  const actions={
-    slack:['log_event','send_slack_notification','update_task_status'],
-    email:['log_event','compose_email_digest','send_email','mark_notified'],
-    calendar:['log_event','find_free_slot','create_calendar_block','notify_user'],
-  };
-  st.workflows.push({
-    id:++st.nextId, taskId:task.id, taskName:task.name||task.title,
-    taskType:task.pri?'todo':'habit',
-    trigger:'task completed 3+ times',
-    action,
-    actions:actions[action]||actions.slack,
-    status:'deployed',
-    createdAt:new Date().toLocaleString()
-  });
+  if(!t)return;
+  try{
+    const {workflow,delivery,progress}=await api('/api/workflows',{method:'POST',body:{taskId:t.id,action:act}});
+    st.workflows.push(workflow);
+    renderWorkflows();
+    const subs={
+      slack:'Slack reminder will fire daily at 9am with task context.',
+      email:'Morning email digest includes this task + blockers.',
+      calendar:'30-min focus block auto-created in your calendar.'
+    };
+    const note=delivery.delivered?'':'<br/><span style="color:var(--text3);font-size:0.75rem">(n8n webhook not configured — workflow saved locally)</span>';
+    document.getElementById('n8n-success-sub').innerHTML=`${subs[act]||''}${note}<br/><b>+150 XP · +50 GP earned</b>`;
+    document.getElementById('n8n-main').style.display='none';
+    document.getElementById('n8n-success').classList.add('show');
+    applyProgress(progress,null);
+    toast(delivery.delivered?'⚡ Workflow deployed to n8n! +50 GP':'⚡ Workflow saved! +50 GP','success');
+  }catch(e){toast(e.message,'err');}
 }
 
 // ══════════════════════════════════════════════════
@@ -1082,18 +1075,18 @@ function renderWorkflows(){
     el.className='wf-card';
     el.innerHTML=`
       <div class="wf-header">
-        <div class="wf-title">${actionIcons[w.action]||'⚡'} ${w.taskName}</div>
+        <div class="wf-title">${actionIcons[w.action_type]||'⚡'} ${w.task_name}</div>
         <span class="wf-status ${w.status}">${w.status}</span>
       </div>
       <div class="wf-trigger-row">
         <span class="wf-trigger-label">Trigger</span>
-        <span class="wf-trigger-val">${w.trigger}</span>
+        <span class="wf-trigger-val">${w.trigger_desc}</span>
       </div>
       <div class="wf-actions-label">Actions</div>
       <div class="wf-actions-list">
-        ${w.actions.map(a=>`<div class="wf-action-tag"><div class="wf-act-dot"></div>${a}</div>`).join('')}
+        ${w.actions_json.map(a=>`<div class="wf-action-tag"><div class="wf-act-dot"></div>${a}</div>`).join('')}
       </div>
-      <div class="wf-meta">Task type: ${w.taskType} · Created: ${w.createdAt} · Trigger count: 3+</div>`;
+      <div class="wf-meta">Task type: ${w.task_type} · Created: ${new Date(w.created_at).toLocaleString()} · Trigger count: 3+</div>`;
     list.appendChild(el);
   });
 }
@@ -1102,17 +1095,18 @@ function renderWorkflows(){
 //  TEAM DASHBOARD
 // ══════════════════════════════════════════════════
 function renderTeam(){
+  const team=st.team||{members:[],activity:[],tasks:[]};
   // Activity
   const act=document.getElementById('team-activity');
   if(act){
     act.innerHTML='';
-    st.teamActivity.forEach(a=>{
+    team.activity.forEach(a=>{
       const el=document.createElement('div');
       el.className='activity-item';
       el.innerHTML=`
-        <div class="act-avatar" style="background:${a.color}">${a.user[0]}</div>
-        <div class="act-text"><b>${a.user}</b> ${a.action}${a.xp>0?` <span style="color:var(--px);font-size:0.75rem;font-weight:700">+${a.xp} XP</span>`:''}</div>
-        <div class="act-time">${a.time}</div>`;
+        <div class="act-avatar" style="background:#1E3A5F">${(a.display_name||'?')[0]}</div>
+        <div class="act-text"><b>${a.display_name}</b> ${a.action}${a.xp_delta>0?` <span style="color:var(--px);font-size:0.75rem;font-weight:700">+${a.xp_delta} XP</span>`:''}</div>
+        <div class="act-time">${timeAgo(a.created_at)}</div>`;
       act.appendChild(el);
     });
   }
@@ -1120,12 +1114,13 @@ function renderTeam(){
   const members=document.getElementById('team-members');
   if(members){
     members.innerHTML='';
-    TEAM_CHARS.forEach(c=>{
+    team.members.forEach(m=>{
+      const c=charFromMember(m,m.id===st.userId);
       const el=document.createElement('div');
       el.className='activity-item';
       el.innerHTML=`
         <div style="flex-shrink:0">${makeFig(c,3)}</div>
-        <div class="act-text"><b>${c.me?st.user.split(' ')[0]:c.name}</b><br/><span style="font-size:0.75rem;color:var(--text3);">LVL ${c.lvl} · Backend Dev</span></div>
+        <div class="act-text"><b>${c.me?st.user.split(' ')[0]:c.name}</b><br/><span style="font-size:0.75rem;color:var(--text3);">LVL ${m.level} · Backend Dev</span></div>
         <div class="act-time"><span class="td-pri h" style="font-size:0.7rem;padding:2px 6px;background:rgba(5,150,105,0.1);color:var(--green);font-weight:700">Active</span></div>`;
       members.appendChild(el);
     });
@@ -1134,47 +1129,79 @@ function renderTeam(){
   const tasks=document.getElementById('team-tasks');
   if(tasks){
     tasks.innerHTML='';
-    st.teamTasks.forEach(t=>{
+    team.tasks.forEach(t=>{
       const el=document.createElement('div');
       el.className='team-task-item';
       const priColor={h:'var(--red)',m:'var(--yellow)',l:'var(--cyan)'};
       el.innerHTML=`
-        <div class="tt-check" style="${t.done?'background:var(--green);border-color:var(--green)':''}"></div>
+        <div class="tt-check" style="cursor:pointer;${t.done?'background:var(--green);border-color:var(--green)':''}" onclick="toggleTeamTask(${t.id})"></div>
         <div class="tt-name" style="${t.done?'text-decoration:line-through;color:var(--text3)':''}">${t.name}</div>
-        <div class="tt-owner" style="color:var(--text3);">@${t.owner}</div>
-        <span class="tt-pri" style="background:rgba(0,0,0,0.06);color:${priColor[t.pri]};font-size:0.65rem;padding:2px 6px;border-radius:4px;font-weight:700">${PRI_LABEL[t.pri]}</span>`;
+        <div class="tt-owner" style="color:var(--text3);">@${t.owner_name}</div>
+        <span class="tt-pri" style="background:rgba(0,0,0,0.06);color:${priColor[t.priority]};font-size:0.65rem;padding:2px 6px;border-radius:4px;font-weight:700">${PRI_LABEL[t.priority]}</span>`;
       tasks.appendChild(el);
     });
   }
 }
 
-function addTeamTask(){
+async function addTeamTask(){
   const inp=document.getElementById('team-task-inp');
   const val=inp.value.trim();if(!val)return;
   const pri=document.getElementById('team-task-pri').value;
-  st.teamTasks.push({id:++st.nextId,name:val,pri,owner:st.user.split(' ')[0],done:false});
-  st.teamActivity.unshift({user:st.user.split(' ')[0],action:`added "${val}" to team board`,xp:0,time:'just now',color:'#1E3A5F'});
-  inp.value='';
-  renderTeam();toast('Team task added 📋','success');
+  try{
+    await api('/api/team/tasks',{method:'POST',body:{name:val,priority:pri}});
+    st.team=await api('/api/team');
+    inp.value='';
+    renderTeam();toast('Team task added 📋','success');
+  }catch(e){toast(e.message,'err');}
+}
+
+async function toggleTeamTask(id){
+  try{
+    await api(`/api/team/tasks/${id}/toggle`,{method:'POST'});
+    st.team=await api('/api/team');
+    renderTeam();
+  }catch(e){toast(e.message,'err');}
 }
 
 // ══════════════════════════════════════════════════
-//  VOICE INPUT
+//  VOICE INPUT — real pipeline: browser Speech Recognition -> transcript ->
+//  server-side intent parsing -> task. No API keys, no audio upload.
 // ══════════════════════════════════════════════════
-const VOICE_TASKS=[
-  {name:'Implement JWT refresh token endpoint',col:'todos',pri:'h'},
-  {name:'Write SQL migration for users table',col:'habits',cat:'sql'},
-  {name:'Debug GraphQL resolver N+1 issue',col:'todos',pri:'m'},
-  {name:'Set up Redis caching layer',col:'todos',pri:'h'},
-  {name:'Review backend PR #147',col:'dailies'},
-];
-function voiceInput(){
-  const pick=VOICE_TASKS[Math.floor(Math.random()*VOICE_TASKS.length)];
-  const id=++st.nextId;
-  if(pick.col==='habits')st.habits.push({id,name:pick.name,cat:pick.cat||'backend',streak:0,count:0});
-  else if(pick.col==='dailies')st.dailies.push({id,name:pick.name,cat:'backend',done:false,streak:0,timer:'30m'});
-  else st.todos.push({id,name:pick.name,pri:pick.pri||'m',done:false,daysOld:0,count:0});
-  renderAll();toast(`🎙️ Voice task added: "${pick.name.slice(0,40)}"`,'success');
+const SpeechRec=window.SpeechRecognition||window.webkitSpeechRecognition;
+let recognizer=null;
+async function voiceInput(){
+  if(!SpeechRec){
+    toast('Voice input needs Chrome or Edge (Web Speech API)','err');
+    return;
+  }
+  if(recognizer){recognizer.stop();return;}
+  recognizer=new SpeechRec();
+  recognizer.lang='en-US';
+  recognizer.interimResults=false;
+  recognizer.maxAlternatives=1;
+  document.getElementById('voice-fab').classList.add('recording');
+  toast('🎙️ Listening… click again to stop','warn');
+
+  recognizer.onresult=async(e)=>{
+    const transcript=e.results[0][0].transcript;
+    toast('🎙️ Parsing…','xp');
+    try{
+      const {task}=await api('/api/voice',{method:'POST',body:{transcript}});
+      const col=task.type==='habit'?'habits':task.type==='daily'?'dailies':'todos';
+      st[col].push(task);
+      renderAll();
+      toast(`🎙️ "${transcript.slice(0,50)}" → added to ${col}`,'success');
+    }catch(e){toast(e.message,'err');}
+  };
+  recognizer.onerror=(e)=>{
+    if(e.error!=='aborted')toast(`Voice input error: ${e.error}`,'err');
+  };
+  recognizer.onend=()=>{
+    recognizer=null;
+    document.getElementById('voice-fab').classList.remove('recording');
+  };
+  try{recognizer.start();}
+  catch(e){toast('Microphone access denied','err');recognizer=null;document.getElementById('voice-fab').classList.remove('recording');}
 }
 
 // ══════════════════════════════════════════════════
@@ -1185,13 +1212,16 @@ function openMilestone(){
   document.getElementById('ms-sub').textContent=`Amazing work hitting Level ${st.level}! You've earned a real-world reward. Set your incentive below to keep the momentum going.`;
   openModal('milestone-modal');
 }
-function saveMilestone(){
+async function saveMilestone(){
   const val=document.getElementById('ms-reward-input').value.trim();
   if(!val){toast('Enter a reward name!','warn');return;}
-  st.rewards.push({id:++st.nextId,name:`🏆 Milestone LVL${st.level}: ${val}`,cost:0});
-  closeModal('milestone-modal');
-  renderRewards();
-  toast(`Reward saved: ${val} 🎯`,'success');
+  try{
+    const reward=await api('/api/tasks',{method:'POST',body:{type:'reward',name:`🏆 Milestone LVL${st.level}: ${val}`,cost:0}});
+    st.rewards.push(reward);
+    closeModal('milestone-modal');
+    renderRewards();
+    toast(`Reward saved: ${val} 🎯`,'success');
+  }catch(e){toast(e.message,'err');}
 }
 
 // ══════════════════════════════════════════════════
@@ -1234,7 +1264,7 @@ function toast(msg,type=''){
 // ══════════════════════════════════════════════════
 (function(){
   // Hero figure for login
-  document.getElementById('login-hero-fig').innerHTML=makeFig(TEAM_CHARS[0],5);
+  document.getElementById('login-hero-fig').innerHTML=makeFig(HERO_DECOR,5);
   // Background figures
   const figs=document.getElementById('login-figs');
   const bgs=[
